@@ -29,9 +29,9 @@ WORKOUTS = {
     },
     "normal": {
         "weight_loss": {
-            "pushups": "3x3",
-            "squats": "3x3",
-            "situps": "3x3"
+            "pushups": "3x1",
+            "squats": "3x1",
+            "situps": "3x1"
         },
         "muscle_gain": {
             "pushups": "15x4",

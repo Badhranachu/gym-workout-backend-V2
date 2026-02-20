@@ -76,6 +76,7 @@ def detect_workout_and_rep(landmarks, program_workout):
 
     # ---------------- SQUAT ONLY ----------------
     if program_workout == "squat":
+
         hip = landmarks[23]
         knee = landmarks[25]
         ankle = landmarks[27]
@@ -86,14 +87,17 @@ def detect_workout_and_rep(landmarks, program_workout):
             [ankle.x, ankle.y]
         )
 
-        knee_bent = squat_angle < 140
-        hip_down = hip.y > knee.y - 0.02
+        # --- Relaxed thresholds ---
+        half_depth = squat_angle < 140      # allow 50% squat
+        standing = squat_angle > 160        # relaxed lockout
 
-        if knee_bent and hip_down:
+        # -------- DOWN PHASE --------
+        if half_depth:
             squat_stage = "down"
             return "squat", False
 
-        elif squat_angle > 165 and squat_stage == "down":
+        # -------- UP PHASE (REP COMPLETE) --------
+        elif standing and squat_stage == "down":
             if now - last_squat_time > REP_COOLDOWN:
                 squat_stage = "up"
                 last_squat_time = now
@@ -103,38 +107,29 @@ def detect_workout_and_rep(landmarks, program_workout):
 
     # ---------------- SITUP ONLY ----------------
     if program_workout == "situp":
+
         shoulder = landmarks[11]
+        now = time.time()
 
         if situp_base_shoulder_y is None:
             situp_base_shoulder_y = shoulder.y
 
-        # baseline = lowest (lying) shoulder position
-        situp_base_shoulder_y = max(situp_base_shoulder_y, shoulder.y)
+        # Lift amount
         shoulder_lift = situp_base_shoulder_y - shoulder.y
 
-        UP_THRESHOLD = 0.10
-        DOWN_THRESHOLD = 0.03
+        # ---- Relaxed thresholds ----
+        UP_THRESHOLD = 0.06     # reduced from 0.12
+        DOWN_THRESHOLD = 0.02   # reduced from 0.05
 
-        # 🔹 Identify situp posture
-        if shoulder_lift > DOWN_THRESHOLD:
-            detected = "situp"
-        else:
-            detected = "none"
-
-        # 🔹 Going UP
+        # -------- GOING UP --------
         if shoulder_lift > UP_THRESHOLD:
             situp_stage = "up"
 
-        # 🔹 Coming DOWN → REP COMPLETE
+        # -------- COMING DOWN → REP COMPLETE --------
         if shoulder_lift < DOWN_THRESHOLD and situp_stage == "up":
             if now - last_situp_time > REP_COOLDOWN:
                 situp_stage = "down"
                 last_situp_time = now
                 return "situp", True
 
-        # 🔹 Detected but no rep yet
-        if detected == "situp":
-            return "situp", False
-
-        return "none", False
-
+        return "situp", False
