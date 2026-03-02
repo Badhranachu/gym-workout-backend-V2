@@ -18,49 +18,41 @@ WORKOUTS = {
     "underweight": {
         "weight_loss": {
             "pushups": "5x2",
-            "squats": "10x2",
-            "situps": "8x2"
+            "squats": "10x2"
         },
         "muscle_gain": {
             "pushups": "8x3",
-            "squats": "15x3",
-            "situps": "12x3"
+            "squats": "15x3"
         }
     },
     "normal": {
         "weight_loss": {
             "pushups": "3x1",
-            "squats": "3x1",
-            "situps": "3x1"
+            "squats": "3x1"
         },
         "muscle_gain": {
             "pushups": "15x4",
-            "squats": "25x4",
-            "situps": "20x4"
+            "squats": "25x4"
         }
     },
     "overweight": {
         "weight_loss": {
             "pushups": "10x4",
-            "squats": "25x4",
-            "situps": "15x4"
+            "squats": "25x4"
         },
         "muscle_gain": {
             "pushups": "12x3",
-            "squats": "20x3",
-            "situps": "15x3"
+            "squats": "20x3"
         }
     },
     "obese": {
         "weight_loss": {
             "pushups": "6x4",
-            "squats": "15x4",
-            "situps": "10x4"
+            "squats": "15x4"
         },
         "muscle_gain": {
             "pushups": "8x3",
-            "squats": "12x3",
-            "situps": "10x3"
+            "squats": "12x3"
         }
     }
 }
