@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from urllib import error as url_error
 from urllib import request as url_request
+from urllib.parse import quote
 
 import cv2
 import mediapipe as mp
@@ -15,9 +16,14 @@ from rest_framework.views import APIView
 
 from .detect_workout import detect_workout_and_rep, reset_states
 from .models import UserFitnessProfile, WorkoutProgress
-from .utils import WORKOUTS, calculate_bmi
+from .utils import WORKOUTS, build_workout_plan, calculate_bmi
 
 mp_pose = mp.solutions.pose
+
+EXERCISE_VIDEO_FILES = {
+    "squat": "squats 1.mp4",
+    "pushup": "pushup.mp4",
+}
 
 
 def _parse_reps_sets(value):
@@ -25,10 +31,28 @@ def _parse_reps_sets(value):
     return int(reps), int(sets)
 
 
-def _progress_defaults(profile):
-    reps, sets = _parse_reps_sets(profile.workout_plan["pushups"])
+def _plan_key(workout_name):
+    return f"{workout_name}s"
+
+
+def _exercise_order(profile):
+    sequence = profile.workout_plan.get("exercise_order") or ["squat", "pushup"]
+    valid_sequence = [name for name in sequence if name in EXERCISE_VIDEO_FILES]
+    return valid_sequence or ["squat", "pushup"]
+
+
+def _exercise_video_urls(request):
     return {
-        "program_workout": "pushup",
+        workout_name: request.build_absolute_uri(f"{settings.MEDIA_URL}{quote(filename)}")
+        for workout_name, filename in EXERCISE_VIDEO_FILES.items()
+    }
+
+
+def _progress_defaults(profile):
+    first_workout = _exercise_order(profile)[0]
+    reps, sets = _parse_reps_sets(profile.workout_plan[_plan_key(first_workout)])
+    return {
+        "program_workout": first_workout,
         "current_set": 1,
         "remaining_reps": reps,
         "total_sets": sets,
@@ -49,7 +73,7 @@ def _profile_context(profile, progress):
     return (
         f"User profile: height={profile.height}cm, weight={profile.weight}kg, "
         f"gender={profile.gender}, goal={profile.goal}, bmi={profile.bmi}, "
-        f"bmi_category={profile.bmi_category}. "
+        f"bmi_category={profile.bmi_category}, health_issue={profile.health_issue or 'none'}. "
         f"Workout plan={json.dumps(profile.workout_plan)}. "
         f"Today progress: workout={progress.program_workout}, "
         f"set={progress.current_set}/{progress.total_sets}, "
@@ -73,17 +97,19 @@ def _fallback_coach_reply(profile, progress):
         "oats with nuts and seeds",
         "rice + vegetables + lean protein",
     ]
-
-    next_workout = "pushups" if progress.program_workout == "pushup" else "squats"
     hydration = "2.5 to 3.5 liters of water daily"
+    tips = profile.workout_plan.get("tips") or []
+
     return (
         f"Post-workout guidance for your profile:\n"
         f"- BMI: {profile.bmi} ({profile.bmi_category}), goal: {profile.goal}, gender: {profile.gender}\n"
+        f"- Health issue noted: {profile.health_issue or 'None'}\n"
         f"- Protein target: {protein_low}g to {protein_high}g per day\n"
         f"- Food suggestions: {', '.join(foods)}\n"
         f"- Hydration: {hydration}\n"
         f"- Recovery: 7-8 hours sleep, light walk/stretch 10-15 min\n"
-        # f"- Next workout focus: {next_workout} (today set {progress.current_set}/{progress.total_sets}, remaining reps {progress.remaining_reps})"
+        f"- Form tips: {'; '.join(tips[:4]) if tips else 'Move pain-free and use clean form.'}\n"
+        f"- Current workout: {progress.program_workout}, set {progress.current_set}/{progress.total_sets}, remaining reps {progress.remaining_reps}"
     )
 
 
@@ -110,10 +136,13 @@ def _read_dotenv_value(key):
 
 def _get_openrouter_api_key():
     keys = (
+        os.getenv("OPENROUTER_API_KEY"),
         os.getenv("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"),
         os.getenv("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"),
         os.getenv("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"),
+        getattr(settings, "OPENROUTER_API_KEY", None),
         getattr(settings, "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", None),
+        _read_dotenv_value("OPENROUTER_API_KEY"),
         _read_dotenv_value("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"),
         _read_dotenv_value("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"),
     )
@@ -140,16 +169,18 @@ class CreateProfileView(APIView):
 
         bmi, category = calculate_bmi(height, weight)
         goal = data["goal"]
+        health_issue = str(data.get("health_issue") or "").strip()
 
         if goal not in WORKOUTS.get(category, {}):
             return Response({"error": "invalid goal"}, status=400)
 
-        workout = WORKOUTS[category][goal]
+        workout = build_workout_plan(category, goal, health_issue)
         profile = UserFitnessProfile.objects.create(
             height=height,
             weight=weight,
             gender=data["gender"],
             goal=goal,
+            health_issue=health_issue,
             bmi=bmi,
             bmi_category=category,
             workout_plan=workout,
@@ -160,7 +191,9 @@ class CreateProfileView(APIView):
                 "profile_id": profile.id,
                 "bmi": bmi,
                 "category": category,
+                "health_issue": health_issue,
                 "workout": workout,
+                "exercise_videos": _exercise_video_urls(request),
             }
         )
 
@@ -229,18 +262,23 @@ class AnalyzeFrameView(APIView):
                 if progress.current_set < progress.total_sets:
                     progress.current_set += 1
                     reps, _ = _parse_reps_sets(
-                        profile.workout_plan[progress.program_workout + "s"]
+                        profile.workout_plan[_plan_key(progress.program_workout)]
                     )
                     progress.remaining_reps = reps
                 else:
-                    if progress.program_workout == "pushup":
-                        next_workout = "squat"
-                    else:
+                    sequence = _exercise_order(profile)
+                    next_workout = None
+                    if progress.program_workout in sequence:
+                        current_index = sequence.index(progress.program_workout)
+                        if current_index < len(sequence) - 1:
+                            next_workout = sequence[current_index + 1]
+
+                    if not next_workout:
                         progress.is_completed = True
                         progress.save()
                         return Response({"completed": True, **_progress_payload(progress)})
 
-                    reps, sets = _parse_reps_sets(profile.workout_plan[next_workout + "s"])
+                    reps, sets = _parse_reps_sets(profile.workout_plan[_plan_key(next_workout)])
                     progress.program_workout = next_workout
                     progress.current_set = 1
                     progress.remaining_reps = reps
@@ -279,10 +317,12 @@ class TodayWorkoutView(APIView):
                     "weight": profile.weight,
                     "gender": profile.gender,
                     "goal": profile.goal,
+                    "health_issue": profile.health_issue,
                     "bmi": profile.bmi,
                     "category": profile.bmi_category,
                 },
                 "workout_plan": profile.workout_plan,
+                "exercise_videos": _exercise_video_urls(request),
                 "progress": _progress_payload(progress),
             }
         )
